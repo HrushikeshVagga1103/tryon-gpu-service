@@ -3,6 +3,8 @@ CatVTON model wrapper for inference.
 """
 import os
 import torch
+import numpy as np
+import cv2
 from PIL import Image
 from typing import Optional
 from diffusers import StableDiffusionInpaintPipeline
@@ -120,7 +122,8 @@ class CatVTONPredictor:
         output_path: Optional[str] = None,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
-        strength: float = 0.8
+        strength: float = 0.8,
+        garment_type: str = "upper"  # "upper" for shirts, "lower" for pants
     ) -> Image.Image:
         """
         Run inference on person and garment images.
@@ -132,6 +135,7 @@ class CatVTONPredictor:
             num_inference_steps: Number of denoising steps
             guidance_scale: Guidance scale for classifier-free guidance
             strength: Strength of the inpainting (0.0 to 1.0)
+            garment_type: Type of garment - "upper" (shirts) or "lower" (pants)
         
         Returns:
             PIL Image of the result
@@ -145,27 +149,55 @@ class CatVTONPredictor:
         person_image = person_image.resize(target_size, Image.Resampling.LANCZOS)
         garment_image = garment_image.resize(target_size, Image.Resampling.LANCZOS)
         
-        # CatVTON typically uses concatenation approach:
-        # Combine person and garment images as input
-        # For inpainting-style models, we create a mask and combine images
+        # Create a mask for the garment area on the person
+        # For upper garments (shirts), mask the upper body area
+        # For lower garments (pants), mask the lower body area
+        mask = np.zeros((target_size[1], target_size[0]), dtype=np.uint8)
         
-        # Create a simple mask (can be adjusted based on actual CatVTON implementation)
-        # In typical CatVTON, the garment area is masked out on the person image
-        import numpy as np
-        mask = np.ones((target_size[1], target_size[0]), dtype=np.uint8) * 255
+        if garment_type == "upper":
+            # Mask upper body area (approximately top 60% of image)
+            # This covers the torso area where shirts would be worn
+            mask_height = int(target_size[1] * 0.6)
+            mask[0:mask_height, :] = 255
+            
+            # Create a more natural mask shape (rounded top, straight bottom)
+            # Add some feathering at the edges for smoother blending
+            y, x = np.ogrid[:mask_height, :target_size[0]]
+            center_x = target_size[0] // 2
+            center_y = mask_height // 2
+            
+            # Create elliptical mask for more natural shape
+            ellipse_mask = ((x - center_x) ** 2 / (target_size[0] * 0.4) ** 2 + 
+                          (y - center_y) ** 2 / (mask_height * 0.5) ** 2) <= 1
+            mask[0:mask_height, :] = np.where(ellipse_mask, 255, 0).astype(np.uint8)
+            
+        elif garment_type == "lower":
+            # Mask lower body area (approximately bottom 60% of image)
+            mask_height = int(target_size[1] * 0.6)
+            mask_start = target_size[1] - mask_height
+            mask[mask_start:, :] = 255
+        else:
+            # Default: mask entire center area
+            mask[int(target_size[1] * 0.2):int(target_size[1] * 0.8), :] = 255
         
-        # For CatVTON, we typically concatenate person and garment
-        # This is a simplified version - adjust based on actual model requirements
-        combined_image = Image.new("RGB", (target_size[0] * 2, target_size[1]))
-        combined_image.paste(person_image, (0, 0))
-        combined_image.paste(garment_image, (target_size[0], 0))
+        # Apply Gaussian blur to mask edges for smoother blending
+        mask = cv2.GaussianBlur(mask, (21, 21), 0)
         
         # Convert mask to PIL Image
         mask_image = Image.fromarray(mask)
         
-        # Prepare prompt (CatVTON may use specific prompts)
-        prompt = "a person wearing the garment, high quality, detailed"
-        negative_prompt = "blurry, low quality, distorted, deformed"
+        # Prepare prompt with garment description
+        # Use more specific prompts for better results
+        prompt = (
+            f"a person wearing a {garment_type} garment, "
+            "high quality, detailed, realistic, professional photography, "
+            "perfect fit, natural lighting, full body"
+        )
+        negative_prompt = (
+            "blurry, low quality, distorted, deformed, "
+            "bad anatomy, extra limbs, missing limbs, "
+            "ugly, duplicate, watermark, text, signature"
+        )
         
         # Run inference
         with torch.inference_mode():

@@ -65,12 +65,39 @@ docker run -d \
 
 ## API Usage
 
+### Swagger UI (Interactive Documentation)
+
+FastAPI automatically provides Swagger UI for testing:
+
+**On RunPod with Public URL:**
+```
+https://xxxxx-8000.proxy.runpod.net/docs
+```
+
+**Local:**
+```
+http://localhost:8000/docs
+```
+
+**Alternative - ReDoc:**
+```
+http://localhost:8000/redoc
+```
+
+The Swagger UI allows you to:
+- View all available endpoints
+- Test endpoints directly from the browser
+- See request/response schemas
+- Authorize with your API key
+
 ### Authentication
 
 Include the API key in the request header:
 ```
 X-API-Key: your-secret-api-key-here
 ```
+
+In Swagger UI, click the "Authorize" button at the top and enter your API key.
 
 ### Try-On Endpoint
 
@@ -103,7 +130,18 @@ Response:
 
 Returns service health status including model and GPU availability.
 
-## Example cURL Request
+## Testing
+
+### Using Swagger UI (Easiest Method)
+
+1. **Get your RunPod public URL** from the RunPod dashboard
+2. **Open Swagger UI** at: `https://your-runpod-url-8000.proxy.runpod.net/docs`
+3. **Click "Authorize"** button at the top and enter your API key
+4. **Expand the `/tryon` endpoint** and click "Try it out"
+5. **Fill in the request body** with your GCS URIs
+6. **Click "Execute"** to test
+
+### Using cURL
 
 ```bash
 curl -X POST "http://localhost:8000/tryon" \
@@ -114,6 +152,18 @@ curl -X POST "http://localhost:8000/tryon" \
     "garment_image_uri": "gs://my-bucket/garment.jpg"
   }'
 ```
+
+### Using Python Test Script
+
+```bash
+python test_api.py \
+  --url http://localhost:8000 \
+  --api-key your-secret-api-key \
+  --person-uri gs://my-bucket/person.jpg \
+  --garment-uri gs://my-bucket/garment.jpg
+```
+
+For detailed testing instructions, see `TESTING.md`.
 
 ## Project Structure
 

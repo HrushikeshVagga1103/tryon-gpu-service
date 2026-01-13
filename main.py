@@ -49,6 +49,7 @@ class TryOnRequest(BaseModel):
     num_inference_steps: Optional[int] = 50
     guidance_scale: Optional[float] = 7.5
     strength: Optional[float] = 0.8
+    garment_type: Optional[str] = "upper"  # "upper" for shirts/tops, "lower" for pants/bottoms
 
 
 class TryOnResponse(BaseModel):
@@ -174,7 +175,8 @@ async def try_on(
             output_path=output_local_path,
             num_inference_steps=request.num_inference_steps,
             guidance_scale=request.guidance_scale,
-            strength=request.strength
+            strength=request.strength,
+            garment_type=request.garment_type
         )
         
         # Determine output URI

@@ -28,7 +28,9 @@ cp .env.example .env
 Edit `.env` with your settings:
 - `API_KEY`: Your secret API key for authentication
 - `GCS_SERVICE_ACCOUNT_PATH`: Path to your GCS service account JSON file
-- `MODEL_PATH`: (Optional) Custom model path or Hugging Face model ID
+- `MODEL_PATH`: **Required** - Path to CatVTON model or Hugging Face model ID
+  - For best results: Use actual CatVTON model (see `CATVTON_SETUP.md`)
+  - For testing: `runwayml/stable-diffusion-inpainting` (fallback, lower quality)
 
 ### 2. Local Development
 
@@ -178,12 +180,33 @@ cat-tryon-service/
 └── README.md           # This file
 ```
 
+## Important: Using CatVTON Model
+
+**For best results, use the actual CatVTON model**, not generic inpainting models.
+
+The current setup supports:
+- ✅ **CatVTON model** (recommended) - Specifically designed for virtual try-on
+- ⚠️ **Stable Diffusion Inpainting** (fallback) - Generic model, lower quality results
+
+**To use CatVTON:**
+1. Clone the CatVTON repository: `git clone https://github.com/Zheng-Chong/CatVTON.git`
+2. Install dependencies and download model weights
+3. Set `MODEL_PATH` to the CatVTON directory
+4. See `CATVTON_SETUP.md` for detailed instructions
+
+**Why CatVTON?**
+- Specifically trained for virtual try-on
+- Uses concatenation-based architecture (person + garment)
+- Produces much better, more realistic results
+- Lightweight (~899M parameters, <8GB VRAM)
+
 ## Notes
 
 - The service automatically downloads images from GCS, processes them, and uploads results
 - Temporary files are cleaned up after each request
 - The model uses FP16 precision for efficiency on GPU
 - Adjust `num_inference_steps`, `guidance_scale`, and `strength` based on your quality/speed requirements
+- **For best results, use the actual CatVTON model instead of generic inpainting models**
 
 ## Troubleshooting
 

@@ -45,21 +45,59 @@ class CatVTONPredictor:
                 "Example: export MODEL_PATH=runwayml/stable-diffusion-inpainting"
             )
         
-        print(f"Loading CatVTON model from: {model_path}")
+        print(f"Loading model from: {model_path}")
         print(f"Device: {device}, FP16: {use_fp16}")
         
-        # Load the pipeline
-        # Note: CatVTON typically uses Stable Diffusion Inpainting architecture
-        # Adjust model loading based on actual CatVTON implementation
         dtype = torch.float16 if self.use_fp16 else torch.float32
         
         # Check if model_path is a local path or Hugging Face ID
         is_local = os.path.exists(model_path) or os.path.isdir(model_path)
         
+        # Detect if this is CatVTON model
+        self.is_catvton = False
+        if is_local:
+            # Check for CatVTON-specific files/directories
+            catvton_indicators = [
+                os.path.join(model_path, "CatVTON"),
+                os.path.join(model_path, "catvton"),
+                os.path.join(model_path, "inference.py"),
+                os.path.join(model_path, "models"),
+            ]
+            if any(os.path.exists(indicator) for indicator in catvton_indicators):
+                self.is_catvton = True
+                print("⚠️  CatVTON model detected! Attempting to load...")
+                print("   Note: Full CatVTON integration requires the CatVTON repository.")
+                print("   See CATVTON_SETUP.md for setup instructions.")
+        
+        # Try to load CatVTON if detected
+        if self.is_catvton:
+            try:
+                # Try importing CatVTON's inference module
+                import sys
+                catvton_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
+                if catvton_dir not in sys.path:
+                    sys.path.insert(0, catvton_dir)
+                
+                # Attempt to use CatVTON's actual implementation
+                # This will work if CatVTON is properly installed
+                try:
+                    from inference import CatVTONInference  # CatVTON's inference class
+                    self.catvton_model = CatVTONInference(model_path, device=device)
+                    print("✅ CatVTON model loaded successfully!")
+                    return
+                except ImportError:
+                    print("⚠️  CatVTON inference module not found. Using fallback method.")
+                    self.is_catvton = False
+            except Exception as e:
+                print(f"⚠️  Failed to load CatVTON: {e}")
+                print("   Falling back to inpainting model...")
+                self.is_catvton = False
+        
+        # Fallback: Load as standard inpainting pipeline
+        print("Loading as Stable Diffusion Inpainting model...")
         try:
             if is_local:
                 print(f"Loading from local path: {model_path}")
-                # Try loading from local directory
                 self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
                     model_path,
                     torch_dtype=dtype,
@@ -69,7 +107,6 @@ class CatVTONPredictor:
                 )
             else:
                 print(f"Loading from Hugging Face: {model_path}")
-                # Try loading as a standard inpainting pipeline from Hugging Face
                 self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
                     model_path,
                     torch_dtype=dtype,
@@ -80,21 +117,19 @@ class CatVTONPredictor:
             error_msg = str(e)
             print(f"Error loading model: {error_msg}")
             
-            # Provide helpful error message
             if "404" in error_msg or "Entry Not Found" in error_msg:
                 raise ValueError(
-                    f"Model not found: {model_path}\n"
-                    "Please verify:\n"
-                    "1. The model ID is correct (check on huggingface.co)\n"
-                    "2. The model is public or you're authenticated\n"
-                    "3. For local paths, ensure the path is correct\n\n"
-                    "Common working models:\n"
+                    f"Model not found: {model_path}\n\n"
+                    "For CatVTON model:\n"
+                    "1. Clone: git clone https://github.com/Zheng-Chong/CatVTON.git\n"
+                    "2. Install dependencies and download weights\n"
+                    "3. Set MODEL_PATH to CatVTON directory\n"
+                    "See CATVTON_SETUP.md for details.\n\n"
+                    "For testing (fallback):\n"
                     "- runwayml/stable-diffusion-inpainting\n"
-                    "- CompVis/stable-diffusion-inpainting\n"
-                    "Or set MODEL_PATH to your local CatVTON model directory"
+                    "- CompVis/stable-diffusion-inpainting"
                 ) from e
             else:
-                # Try alternative loading method
                 print("Attempting alternative loading method...")
                 try:
                     self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
@@ -140,6 +175,71 @@ class CatVTONPredictor:
         Returns:
             PIL Image of the result
         """
+        # If using actual CatVTON model, use its inference method
+        if hasattr(self, 'catvton_model') and self.catvton_model is not None:
+            print("Using CatVTON concatenation-based inference...")
+            return self._catvton_inference(
+                person_image_path, garment_image_path, output_path,
+                num_inference_steps, guidance_scale, garment_type
+            )
+        
+        # Fallback: Use inpainting-based approach
+        print("Using inpainting-based inference (fallback method)...")
+        return self._inpainting_inference(
+            person_image_path, garment_image_path, output_path,
+            num_inference_steps, guidance_scale, strength, garment_type
+        )
+    
+    def _catvton_inference(
+        self,
+        person_image_path: str,
+        garment_image_path: str,
+        output_path: Optional[str],
+        num_inference_steps: int,
+        guidance_scale: float,
+        garment_type: str
+    ) -> Image.Image:
+        """CatVTON concatenation-based inference."""
+        # Load images
+        person_image = Image.open(person_image_path).convert("RGB")
+        garment_image = Image.open(garment_image_path).convert("RGB")
+        
+        # CatVTON uses concatenation: person + garment side by side
+        # Resize to CatVTON's expected size (typically 768x1024 or similar)
+        target_width = 768
+        target_height = 1024
+        
+        person_image = person_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        garment_image = garment_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        
+        # Concatenate horizontally: [person | garment]
+        combined_image = Image.new("RGB", (target_width * 2, target_height))
+        combined_image.paste(person_image, (0, 0))
+        combined_image.paste(garment_image, (target_width, 0))
+        
+        # Use CatVTON's inference method
+        result = self.catvton_model.inference(
+            combined_image,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale
+        )
+        
+        if output_path:
+            result.save(output_path)
+        
+        return result
+    
+    def _inpainting_inference(
+        self,
+        person_image_path: str,
+        garment_image_path: str,
+        output_path: Optional[str],
+        num_inference_steps: int,
+        guidance_scale: float,
+        strength: float,
+        garment_type: str
+    ) -> Image.Image:
+        """Fallback inpainting-based inference (for testing)."""
         # Load images
         person_image = Image.open(person_image_path).convert("RGB")
         garment_image = Image.open(garment_image_path).convert("RGB")
@@ -150,44 +250,35 @@ class CatVTONPredictor:
         garment_image = garment_image.resize(target_size, Image.Resampling.LANCZOS)
         
         # Create a mask for the garment area on the person
-        # For upper garments (shirts), mask the upper body area
-        # For lower garments (pants), mask the lower body area
         mask = np.zeros((target_size[1], target_size[0]), dtype=np.uint8)
         
         if garment_type == "upper":
             # Mask upper body area (approximately top 60% of image)
-            # This covers the torso area where shirts would be worn
             mask_height = int(target_size[1] * 0.6)
             mask[0:mask_height, :] = 255
             
-            # Create a more natural mask shape (rounded top, straight bottom)
-            # Add some feathering at the edges for smoother blending
+            # Create elliptical mask for more natural shape
             y, x = np.ogrid[:mask_height, :target_size[0]]
             center_x = target_size[0] // 2
             center_y = mask_height // 2
             
-            # Create elliptical mask for more natural shape
             ellipse_mask = ((x - center_x) ** 2 / (target_size[0] * 0.4) ** 2 + 
                           (y - center_y) ** 2 / (mask_height * 0.5) ** 2) <= 1
             mask[0:mask_height, :] = np.where(ellipse_mask, 255, 0).astype(np.uint8)
             
         elif garment_type == "lower":
-            # Mask lower body area (approximately bottom 60% of image)
+            # Mask lower body area
             mask_height = int(target_size[1] * 0.6)
             mask_start = target_size[1] - mask_height
             mask[mask_start:, :] = 255
         else:
-            # Default: mask entire center area
             mask[int(target_size[1] * 0.2):int(target_size[1] * 0.8), :] = 255
         
-        # Apply Gaussian blur to mask edges for smoother blending
+        # Apply Gaussian blur to mask edges
         mask = cv2.GaussianBlur(mask, (21, 21), 0)
-        
-        # Convert mask to PIL Image
         mask_image = Image.fromarray(mask)
         
-        # Prepare prompt with garment description
-        # Use more specific prompts for better results
+        # Prepare prompts
         prompt = (
             f"a person wearing a {garment_type} garment, "
             "high quality, detailed, realistic, professional photography, "
@@ -211,7 +302,6 @@ class CatVTONPredictor:
                 strength=strength
             ).images[0]
         
-        # Save if output path provided
         if output_path:
             result.save(output_path)
         

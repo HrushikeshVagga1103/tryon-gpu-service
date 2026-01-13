@@ -34,9 +34,14 @@ class CatVTONPredictor:
         self.device = device
         self.use_fp16 = use_fp16 and device == "cuda"
         
-        # Default to official CatVTON model if not specified
-        if model_path is None:
-            model_path = "levihsu/OOTDiffusion"  # Common CatVTON-style model
+        # MODEL_PATH is required - no default to avoid 404 errors
+        if model_path is None or model_path == "":
+            raise ValueError(
+                "MODEL_PATH environment variable is required. "
+                "Please set it to a valid Hugging Face model ID (e.g., 'runwayml/stable-diffusion-inpainting') "
+                "or a local path to your CatVTON model. "
+                "Example: export MODEL_PATH=runwayml/stable-diffusion-inpainting"
+            )
         
         print(f"Loading CatVTON model from: {model_path}")
         print(f"Device: {device}, FP16: {use_fp16}")
@@ -46,22 +51,59 @@ class CatVTONPredictor:
         # Adjust model loading based on actual CatVTON implementation
         dtype = torch.float16 if self.use_fp16 else torch.float32
         
+        # Check if model_path is a local path or Hugging Face ID
+        is_local = os.path.exists(model_path) or os.path.isdir(model_path)
+        
         try:
-            # Try loading as a standard inpainting pipeline
-            self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-                model_path,
-                torch_dtype=dtype,
-                safety_checker=None,
-                requires_safety_checker=False
-            )
+            if is_local:
+                print(f"Loading from local path: {model_path}")
+                # Try loading from local directory
+                self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+                    model_path,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                    local_files_only=True
+                )
+            else:
+                print(f"Loading from Hugging Face: {model_path}")
+                # Try loading as a standard inpainting pipeline from Hugging Face
+                self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+                    model_path,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False
+                )
         except Exception as e:
-            print(f"Error loading model as standard pipeline: {e}")
-            print("Attempting alternative loading method...")
-            # Fallback: try loading with different parameters
-            self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-                model_path,
-                torch_dtype=dtype
-            )
+            error_msg = str(e)
+            print(f"Error loading model: {error_msg}")
+            
+            # Provide helpful error message
+            if "404" in error_msg or "Entry Not Found" in error_msg:
+                raise ValueError(
+                    f"Model not found: {model_path}\n"
+                    "Please verify:\n"
+                    "1. The model ID is correct (check on huggingface.co)\n"
+                    "2. The model is public or you're authenticated\n"
+                    "3. For local paths, ensure the path is correct\n\n"
+                    "Common working models:\n"
+                    "- runwayml/stable-diffusion-inpainting\n"
+                    "- CompVis/stable-diffusion-inpainting\n"
+                    "Or set MODEL_PATH to your local CatVTON model directory"
+                ) from e
+            else:
+                # Try alternative loading method
+                print("Attempting alternative loading method...")
+                try:
+                    self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+                        model_path,
+                        torch_dtype=dtype
+                    )
+                except Exception as e2:
+                    raise RuntimeError(
+                        f"Failed to load model from {model_path}. "
+                        f"Error: {str(e2)}"
+                    ) from e2
         
         self.pipeline = self.pipeline.to(self.device)
         
